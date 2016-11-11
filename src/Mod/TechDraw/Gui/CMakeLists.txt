@@ -91,6 +91,8 @@ SET(TechDrawGuiView_SRCS
     QGVPage.h
     QGCustomText.cpp
     QGCustomText.h
+    QGICaption.cpp
+    QGICaption.h
     QGCustomRect.cpp
     QGCustomRect.h
     QGCustomSvg.cpp
@@ -101,6 +103,8 @@ SET(TechDrawGuiView_SRCS
     QGCustomLabel.h
     QGCustomBorder.cpp
     QGCustomBorder.h
+    QGCustomImage.cpp
+    QGCustomImage.h
     QGIView.cpp
     QGIView.h
     QGIArrow.cpp
@@ -133,6 +137,8 @@ SET(TechDrawGuiView_SRCS
     QGIViewSymbol.h
     QGIViewSpreadsheet.cpp
     QGIViewSpreadsheet.h
+    QGIViewImage.cpp
+    QGIViewImage.h
     QGIViewClip.cpp
     QGIViewClip.h
     QGIPrimPath.cpp
@@ -178,6 +184,8 @@ SET(TechDrawGuiViewProvider_SRCS
     ViewProviderViewClip.h
     ViewProviderHatch.cpp
     ViewProviderHatch.h
+    ViewProviderImage.cpp
+    ViewProviderImage.h
 )
 
 SOURCE_GROUP("Mod" FILES ${TechDrawGui_SRCS})

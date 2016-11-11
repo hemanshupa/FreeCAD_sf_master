@@ -1671,6 +1671,13 @@ def getDXF(obj,direction=None):
     object. If direction is given, the object is projected in 2D.'''
     plane = None
     result = ""
+    if obj.isDerivedFrom("Drawing::View") or obj.isDerivedFrom("TechDraw::DrawView"):
+        if obj.Source.isDerivedFrom("App::DocumentObjectGroup"):
+            for o in obj.Source.Group:
+                result += getDXF(o,obj.Direction)
+        else:
+            result += getDXF(obj.Source,obj.Direction)
+        return result
     if direction:
         if isinstance(direction,FreeCAD.Vector):
             if direction != Vector(0,0,0):
@@ -1723,7 +1730,7 @@ def getDXF(obj,direction=None):
     return result
 
 
-def getSVG(obj,scale=1,linewidth=0.35,fontsize=12,fillstyle="shape color",direction=None,linestyle=None,color=None,linespacing=None,techdraw=False):
+def getSVG(obj,scale=1,linewidth=0.35,fontsize=12,fillstyle="shape color",direction=None,linestyle=None,color=None,linespacing=None,techdraw=False,rotation=0):
     '''getSVG(object,[scale], [linewidth],[fontsize],[fillstyle],[direction],[linestyle],[color],[linespacing]):
     returns a string containing a SVG representation of the given object,
     with the given linewidth and fontsize (used if the given object contains
@@ -1731,11 +1738,12 @@ def getSVG(obj,scale=1,linewidth=0.35,fontsize=12,fillstyle="shape color",direct
     scale parameter allows to scale linewidths down, so they are resolution-independant.'''
     
     # if this is a group, gather all the svg views of its children
-    if obj.isDerivedFrom("App::DocumentObjectGroup"):
-        svg = ""
-        for child in obj.Group:
-            svg += getSVG(child,scale,linewidth,fontsize,fillstyle,direction,linestyle,color,linespacing,techdraw)
-        return svg
+    if hasattr(obj,"isDerivedFrom"):
+        if obj.isDerivedFrom("App::DocumentObjectGroup"):
+            svg = ""
+            for child in obj.Group:
+                svg += getSVG(child,scale,linewidth,fontsize,fillstyle,direction,linestyle,color,linespacing,techdraw)
+            return svg
     
     import Part, DraftGeomUtils
     pathdata = []
@@ -1763,8 +1771,9 @@ def getSVG(obj,scale=1,linewidth=0.35,fontsize=12,fillstyle="shape color",direct
         else:
             stroke = getrgb(color)
     elif gui:
-        if hasattr(obj.ViewObject,"LineColor"):
-            stroke = getrgb(obj.ViewObject.LineColor)
+        if hasattr(obj,"ViewObject"):
+            if hasattr(obj.ViewObject,"LineColor"):
+                stroke = getrgb(obj.ViewObject.LineColor)
 
     def getLineStyle():
         "returns a linestyle"
@@ -1802,6 +1811,20 @@ def getSVG(obj,scale=1,linewidth=0.35,fontsize=12,fillstyle="shape color",direct
         if techdraw:
             ly = -ly
         return Vector(lx,ly,0)
+        
+    def getDiscretized(edge):
+        ml = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Mod/Draft").GetFloat("svgDiscretization",10.0)
+        d = int(edge.Length/ml)
+        if d == 0:
+            d = 1
+        edata = ""
+        for i in range(d+1):
+            v = getProj(edge.valueAt(edge.FirstParameter+((float(i)/d)*(edge.LastParameter-edge.FirstParameter))))
+            if not edata:
+                edata += 'M ' + str(v.x) +' '+ str(v.y) + ' '
+            else:
+                edata += 'L ' + str(v.x) +' '+ str(v.y) + ' '
+        return edata
 
     def getPattern(pat):
         if pat in svgpatterns():
@@ -1844,48 +1867,54 @@ def getSVG(obj,scale=1,linewidth=0.35,fontsize=12,fillstyle="shape color",direct
                 isellipse = DraftGeomUtils.geomType(e) == "Ellipse"
                 if iscircle or isellipse:
                     import math
-                    c = e.Curve
-                    if len(e.Vertexes) == 1 and iscircle: #complete curve
-                        svg = getCircle(e)
-                        return svg
-                    elif len(e.Vertexes) == 1 and isellipse:
-                        #svg = getEllipse(e)
-                        #return svg
-                        endpoints = (getProj(c.value((c.LastParameter-\
-                                c.FirstParameter)/2.0)), \
-                                getProj(vs[-1].Point))
-                    else:
-                        endpoints = (getProj(vs[-1].Point),)
-
-                    # arc
-                    if iscircle:
-                        rx = ry = c.Radius
-                        rot = 0
-                    else: #ellipse
-                        rx = c.MajorRadius
-                        ry = c.MinorRadius
-                        rot = math.degrees(c.AngleXU * (c.Axis * \
-                            FreeCAD.Vector(0,0,1)))
-                        if rot > 90:
-                            rot -=180
-                        if rot < -90:
-                            rot += 180
-                        #be carefull with the sweep flag
                     if hasattr(FreeCAD,"DraftWorkingPlane"):
                         drawing_plane_normal = FreeCAD.DraftWorkingPlane.axis
                     else:
                         drawing_plane_normal = FreeCAD.Vector(0,0,1)
                     if plane: drawing_plane_normal = plane.axis
-                    flag_large_arc = (((e.ParameterRange[1] - \
-                            e.ParameterRange[0]) / math.pi) % 2) > 1
-                    flag_sweep = (c.Axis * drawing_plane_normal >= 0) \
-                             == (e.LastParameter > e.FirstParameter)
-                    #        == (e.Orientation == "Forward")
-                    for v in endpoints:
-                        edata += 'A %s %s %s %s %s %s %s ' % \
-                                (str(rx),str(ry),str(rot),\
-                                str(int(flag_large_arc)),\
-                                str(int(flag_sweep)),str(v.x),str(v.y))
+                    c = e.Curve
+                    if round(c.Axis.getAngle(drawing_plane_normal),2) == 0:
+                        if len(e.Vertexes) == 1 and iscircle: #complete curve
+                            svg = getCircle(e)
+                            return svg
+                        elif len(e.Vertexes) == 1 and isellipse:
+                            #svg = getEllipse(e)
+                            #return svg
+                            endpoints = (getProj(c.value((c.LastParameter-\
+                                    c.FirstParameter)/2.0)), \
+                                    getProj(vs[-1].Point))
+                        else:
+                            endpoints = (getProj(vs[-1].Point),)
+                        # arc
+                        if iscircle:
+                            rx = ry = c.Radius
+                            rot = 0
+                        else: #ellipse
+                            rx = c.MajorRadius
+                            ry = c.MinorRadius
+                            rot = math.degrees(c.AngleXU * (c.Axis * \
+                                FreeCAD.Vector(0,0,1)))
+                            if rot > 90:
+                                rot -=180
+                            if rot < -90:
+                                rot += 180
+                            #be carefull with the sweep flag
+                        flag_large_arc = (((e.ParameterRange[1] - \
+                                e.ParameterRange[0]) / math.pi) % 2) > 1
+                        #flag_sweep = (c.Axis * drawing_plane_normal >= 0) \
+                        #         == (e.LastParameter > e.FirstParameter)
+                        #        == (e.Orientation == "Forward")
+                        # other method: check the direction of the angle between tangents
+                        t1 = e.tangentAt(e.FirstParameter)
+                        t2 = e.tangentAt(e.FirstParameter + (e.LastParameter-e.FirstParameter)/10)
+                        flag_sweep = (DraftVecUtils.angle(t1,t2,drawing_plane_normal) < 0)
+                        for v in endpoints:
+                            edata += 'A %s %s %s %s %s %s %s ' % \
+                                    (str(rx),str(ry),str(rot),\
+                                    str(int(flag_large_arc)),\
+                                    str(int(flag_sweep)),str(v.x),str(v.y))
+                    else:
+                        edata += getDiscretized(e)
                 elif DraftGeomUtils.geomType(e) == "Line":
                     v = getProj(vs[-1].Point)
                     edata += 'L '+ str(v.x) +' '+ str(v.y) + ' '
@@ -1937,9 +1966,21 @@ def getSVG(obj,scale=1,linewidth=0.35,fontsize=12,fillstyle="shape color",direct
     def getCircle(edge):
         cen = getProj(edge.Curve.Center)
         rad = edge.Curve.Radius
-        svg = '<circle cx="' + str(cen.x)
-        svg += '" cy="' + str(cen.y)
-        svg += '" r="' + str(rad)+'" '
+        if hasattr(FreeCAD,"DraftWorkingPlane"):
+            drawing_plane_normal = FreeCAD.DraftWorkingPlane.axis
+        else:
+            drawing_plane_normal = FreeCAD.Vector(0,0,1)
+        if plane: drawing_plane_normal = plane.axis
+        if round(edge.Curve.Axis.getAngle(drawing_plane_normal),2) == 0:
+            # perpendicular projection: circle
+            svg = '<circle cx="' + str(cen.x)
+            svg += '" cy="' + str(cen.y)
+            svg += '" r="' + str(rad)+'" '
+        else:
+            # any other projection: ellipse
+            svg = '<path d="'
+            svg += getDiscretized(edge)
+            svg += '" '
         svg += 'stroke="' + stroke + '" '
         svg += 'stroke-width="' + str(linewidth) + ' px" '
         svg += 'style="stroke-width:'+ str(linewidth)
@@ -2014,14 +2055,20 @@ def getSVG(obj,scale=1,linewidth=0.35,fontsize=12,fillstyle="shape color",direct
         if techdraw:
             svg = ""
             for i in range(len(text)):
+                t = text[i]
+                if not isinstance(t,unicode):
+                    t = t.decode("utf8")
+                # possible workaround if UTF8 is unsupported
+                #    import unicodedata
+                #    t = u"".join([c for c in unicodedata.normalize("NFKD",t) if not unicodedata.combining(c)]).encode("utf8")
                 svg += '<text fill="' + color +'" font-size="' + str(fontsize) + '" '
                 svg += 'style="text-anchor:'+anchor+';text-align:'+align.lower()+';'
                 svg += 'font-family:'+ fontname +'" '
                 svg += 'transform="rotate('+str(math.degrees(angle))
                 svg += ','+ str(base.x) + ',' + str(base.y+linespacing*i) + ') '
-                svg += 'translate(' + str(base.x) + ',' + str(base.y+linespacing*i) + ') '
-                svg += '" freecad:skip="1"'
-                svg += '>\n' + text[i] + '</text>\n'            
+                svg += 'translate(' + str(base.x) + ',' + str(base.y+linespacing*i) + ')" '
+                #svg += '" freecad:skip="1"'
+                svg += '>\n' + t + '</text>\n'
         else:            
             svg = '<text fill="'
             svg += color +'" font-size="'
@@ -2031,14 +2078,14 @@ def getSVG(obj,scale=1,linewidth=0.35,fontsize=12,fillstyle="shape color",direct
             svg += 'transform="rotate('+str(math.degrees(angle))
             svg += ','+ str(base.x) + ',' + str(base.y) + ') '
             if flip:
-                svg += 'translate(' + str(base.x) + ',' + str(base.y) + ') '
+                svg += 'translate(' + str(base.x) + ',' + str(base.y) + ')'
             else:
-                svg += 'translate(' + str(base.x) + ',' + str(-base.y) + ') '
+                svg += 'translate(' + str(base.x) + ',' + str(-base.y) + ')'
             #svg += 'scale('+str(tmod/2000)+',-'+str(tmod/2000)+') '
             if flip and (not techdraw):
-                svg += 'scale(1,-1) '
+                svg += ' scale(1,-1) '
             else:
-                svg += 'scale(1,1) '
+                svg += ' scale(1,1) '
             svg += '" freecad:skip="1"'
             svg += '>\n'
             if len(text) == 1:
@@ -2065,7 +2112,12 @@ def getSVG(obj,scale=1,linewidth=0.35,fontsize=12,fillstyle="shape color",direct
         pass
 
     elif isinstance(obj,Part.Shape):
-        fill = 'url(#'+fillstyle+')'
+        if "#" in fillstyle:
+            fill = fillstyle
+        elif fillstyle == "shape color":
+            fill = "#888888"
+        else:
+            fill = 'url(#'+fillstyle+')'
         lstyle = getLineStyle()
         svg += getPath(obj.Edges,pathname="")
 
@@ -2231,21 +2283,40 @@ def getSVG(obj,scale=1,linewidth=0.35,fontsize=12,fillstyle="shape color",direct
                         svg += '</text>\n'
                         n += 1
 
+    elif getType(obj) == "Pipe":
+        fill = stroke
+        lstyle = getLineStyle()
+        if obj.Base and obj.Diameter:
+            svg += getPath(obj.Base.Shape.Edges)
+        for f in obj.Shape.Faces:
+            if len(f.Edges) == 1:
+                if isinstance(f.Edges[0].Curve,Part.Circle):
+                    svg += getCircle(f.Edges[0])
+
+    elif getType(obj) == "PipeConnector":
+        pass
+
     elif getType(obj) == "Space":
         "returns an SVG fragment for the text of a space"
         c = getrgb(obj.ViewObject.TextColor)
         n = obj.ViewObject.FontName
         a = 0
+        if rotation != 0:
+            a = -math.radians(rotation)
         t1 = obj.ViewObject.Proxy.text1.string.getValues()
         t2 = obj.ViewObject.Proxy.text2.string.getValues()
         scale = obj.ViewObject.FirstLine.Value/obj.ViewObject.FontSize.Value
         f1 = fontsize*scale
         p2 = FreeCAD.Vector(obj.ViewObject.Proxy.coords.translation.getValue().getValue())
-        p1 = p2.add(FreeCAD.Vector(obj.ViewObject.Proxy.header.translation.getValue().getValue()))
+        lspc = FreeCAD.Vector(obj.ViewObject.Proxy.header.translation.getValue().getValue())
+        p1 = p2.add(lspc)
         j = obj.ViewObject.TextAlign
         svg += getText(c,f1,n,a,getProj(p1),t1,linespacing,j,flip=True)
         if t2:
-            svg += getText(c,fontsize,n,a,getProj(p2),t2,linespacing,j,flip=True)
+            ofs = FreeCAD.Vector(0,lspc.Length,0)
+            if a:
+                ofs = FreeCAD.Rotation(FreeCAD.Vector(0,0,1),-rotation).multVec(ofs)
+            svg += getText(c,fontsize,n,a,getProj(p1).add(ofs),t2,linespacing,j,flip=True)
 
     elif obj.isDerivedFrom('Part::Feature'):
         if obj.Shape.isNull():
@@ -3566,6 +3637,7 @@ class _ViewProviderDimension(_ViewProviderDraft):
         obj.addProperty("App::PropertyBool","ShowUnit","Draft",QT_TRANSLATE_NOOP("App::Property","Show the unit suffix"))
         obj.addProperty("App::PropertyVectorDistance","TextPosition","Draft",QT_TRANSLATE_NOOP("App::Property","The position of the text. Leave (0,0,0) for automatic position"))
         obj.addProperty("App::PropertyString","Override","Draft",QT_TRANSLATE_NOOP("App::Property","Text override. Use $dim to insert the dimension length"))
+        obj.addProperty("App::PropertyString","UnitOverride","Draft",QT_TRANSLATE_NOOP("App::Property","A unit to express the measurement. Leave blank for system default"))
         obj.FontSize = getParam("textheight",0.20)
         obj.TextSpacing = getParam("dimspacing",0.05)
         obj.FontName = getParam("textfont","")
@@ -3749,15 +3821,18 @@ class _ViewProviderDimension(_ViewProviderDraft):
                 su = obj.ViewObject.ShowUnit
             # set text value
             l = self.p3.sub(self.p2).Length
+            unit = None
+            if hasattr(obj.ViewObject,"UnitOverride"):
+                unit = obj.ViewObject.UnitOverride
             # special representation if "Building US" scheme
             if FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Units").GetInt("UserSchema",0) == 5:
                 s = FreeCAD.Units.Quantity(l,FreeCAD.Units.Length).UserString
                 self.string = s.replace("' ","'- ")
                 self.string = s.replace("+"," ")
             elif hasattr(obj.ViewObject,"Decimals"):
-                self.string = DraftGui.displayExternal(l,obj.ViewObject.Decimals,'Length',su)
+                self.string = DraftGui.displayExternal(l,obj.ViewObject.Decimals,'Length',su,unit)
             else:
-                self.string = DraftGui.displayExternal(l,None,'Length',su)
+                self.string = DraftGui.displayExternal(l,None,'Length',su,unit)
             if hasattr(obj.ViewObject,"Override"):
                 if obj.ViewObject.Override:
                     self.string = obj.ViewObject.Override.replace("$dim",\
@@ -4746,14 +4821,7 @@ class _DrawingView(_DraftObject):
 
     def getDXF(self,obj):
         "returns a DXF fragment"
-        result = ""
-        if obj.Source.isDerivedFrom("App::DocumentObjectGroup"):
-            for o in obj.Source.Group:
-                if o.ViewObject.isVisible():
-                    result += getDXF(o,obj.Direction)
-        else:
-            result += getDXF(obj.Source,obj.Direction)
-        return result
+        return getDXF(obj)
 
 class _BSpline(_DraftObject):
     "The BSpline object"
@@ -5640,28 +5708,45 @@ class _Facebinder(_DraftObject):
     def __init__(self,obj):
         _DraftObject.__init__(self,obj,"Facebinder")
         obj.addProperty("App::PropertyLinkSubList","Faces","Draft",QT_TRANSLATE_NOOP("App::Property","Linked faces"))
+        obj.addProperty("App::PropertyBool","RemoveSplitter","Draft",QT_TRANSLATE_NOOP("App::Property","Specifies if splitter lines must be removed"))
+        obj.addProperty("App::PropertyDistance","Extrusion","Draft",QT_TRANSLATE_NOOP("App::Property","An optional extrusion value to be applied to all faces"))
 
     def execute(self,obj):
+        import Part
         pl = obj.Placement
         if not obj.Faces:
             return
         faces = []
-        for f in obj.Faces:
-            if "Face" in f[1]:
-                try:
-                    fnum = int(f[1][4:])-1
-                    faces.append(f[0].Shape.Faces[fnum])
-                except(IndexError,Part.OCCError):
-                    print("Draft: wrong face index")
-                    return
+        for sel in obj.Faces:
+            for f in sel[1]:
+                if "Face" in f:
+                    try:
+                        fnum = int(f[4:])-1
+                        faces.append(sel[0].Shape.Faces[fnum])
+                    except(IndexError,Part.OCCError):
+                        print("Draft: wrong face index")
+                        return
         if not faces:
             return
-        import Part
         try:
             if len(faces) > 1:
-                sh = faces.pop()
-                sh = sh.multiFuse(faces)
-                sh = sh.removeSplitter()
+                sh = None
+                if hasattr(obj,"Extrusion"):
+                    if obj.Extrusion.Value:
+                        for f in faces:
+                            f = f.extrude(f.normalAt(0,0).multiply(obj.Extrusion.Value))
+                            if sh:
+                                sh = sh.fuse(f)
+                            else:
+                                sh = f
+                if not sh:
+                    sh = faces.pop()
+                    sh = sh.multiFuse(faces)
+                if hasattr(obj,"RemoveSplitter"):
+                    if obj.RemoveSplitter:
+                        sh = sh.removeSplitter()
+                else:
+                    sh = sh.removeSplitter()
             else:
                 sh = faces[0]
                 sh.transformShape(sh.Matrix, True)

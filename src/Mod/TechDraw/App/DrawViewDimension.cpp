@@ -128,15 +128,23 @@ void DrawViewDimension::onChanged(const App::Property* prop)
 {
     if (!isRestoring()) {
         if (prop == &MeasureType) {
+//            Base::Console().Message("TRACE -DVD::onChanged(MeasureType) - MeasureType: %d Measurehas3D: %d thisHas3D: %d\n",
+//                                    MeasureType.getValue(),measurement->has3DReferences(),has3DReferences());
             if (MeasureType.isValue("True") && !measurement->has3DReferences()) {
                 Base::Console().Warning("Dimension %s missing Reference to 3D model. Must be Projected.\n", getNameInDocument());
                 MeasureType.setValue("Projected");
             }
         }
         if (prop == &References3D) {                                       //have to rebuild the Measurement object
-            clear3DMeasurements();
+//            Base::Console().Message("TRACE -DVD::onChanged(References3D) - MeasureType: %d has3D: %d thisHas3D: %d\n",
+//                                    MeasureType.getValue(),measurement->has3DReferences(),has3DReferences());
+            clear3DMeasurements();                                                             //Measurement object
             if (!(References3D.getValues()).empty()) {
-                set3DMeasurement(References3D.getValues().at(0),References3D.getSubValues());
+                setAll3DMeasurement();
+            } else {
+                if (MeasureType.isValue("True")) {                                 //empty 3dRefs, but True
+                    MeasureType.touch();                                          //run MeasureType logic for this case
+                }
             }
         }
 
@@ -148,8 +156,7 @@ void DrawViewDimension::onChanged(const App::Property* prop)
 void DrawViewDimension::onDocumentRestored()
 {
     if (has3DReferences()) {
-        clear3DMeasurements();
-        set3DMeasurement(References3D.getValues().at(0),References3D.getSubValues());
+        setAll3DMeasurement();
     }
 }
 
@@ -246,6 +253,7 @@ double DrawViewDimension::getDimValue() const
         if (!measurement->has3DReferences()) {
             return result;
         }
+
         if(Type.isValue("Distance")) {
             result = measurement->delta().Length();
         } else if(Type.isValue("DistanceX")){
@@ -301,8 +309,15 @@ double DrawViewDimension::getDimValue() const
                 Base::Vector2D s1 = gen1->points[0];
                 Base::Vector2D e1 = gen1->points[1];
                 if (Type.isValue("Distance")) {
-                    //we don't do horiz/vertical edge to edge
                     result = dist2Segs(s0,e0,s1,e1) / getViewPart()->Scale.getValue();
+                } else if (Type.isValue("DistanceX")) {
+                    Base::Vector2D p1 = geom0->nearPoint(geom1);
+                    Base::Vector2D p2 = geom1->nearPoint(geom0);
+                    result = fabs(p1.fX - p2.fX) / getViewPart()->Scale.getValue();
+                } else if (Type.isValue("DistanceY")) {
+                    Base::Vector2D p1 = geom0->nearPoint(geom1);
+                    Base::Vector2D p2 = geom1->nearPoint(geom0);
+                    result = fabs(p1.fY - p2.fY) / getViewPart()->Scale.getValue();
                 }
             } else if (getRefType() == twoVertex) {
                 int idx0 = DrawUtil::getIndexFromName(subElements[0]);
@@ -432,40 +447,62 @@ int DrawViewDimension::getRefType() const
 {
     int refType = invalidRef;
     const std::vector<std::string> &subElements      = References2D.getSubValues();
-    if ((subElements.size() == 1) &&
-        (DrawUtil::getGeomTypeFromName(subElements[0]) == "Edge")) {
-        refType = oneEdge;
+    if (subElements.size() == 1) {
+        refType = getRefType1(subElements[0]);
     } else if (subElements.size() == 2) {
-        if ((DrawUtil::getGeomTypeFromName(subElements[0]) == "Edge") &&
-            (DrawUtil::getGeomTypeFromName(subElements[1]) == "Edge")) {
-            refType = twoEdge;
-        } else if ((DrawUtil::getGeomTypeFromName(subElements[0]) == "Vertex") &&
-                   (DrawUtil::getGeomTypeFromName(subElements[1]) == "Vertex")) {
-            refType = twoVertex;
-        } else if (((DrawUtil::getGeomTypeFromName(subElements[0]) == "Vertex") &&
-                    (DrawUtil::getGeomTypeFromName(subElements[1]) == "Edge"))   ||
-                   ((DrawUtil::getGeomTypeFromName(subElements[0]) == "Edge") &&
-                   (DrawUtil::getGeomTypeFromName(subElements[1]) == "Vertex")) ) {
-            refType = vertexEdge;
-        }
-        //} else add different types here - Vertex-Face, ...
+        refType = getRefType2(subElements[0],subElements[1]);
     }
     return refType;
 }
 
-//!add 1 3D measurement Reference
-void DrawViewDimension::set3DMeasurement(DocumentObject* const &obj, const std::vector<std::string>& subElements)
+//static
+int DrawViewDimension::getRefType1(const std::string g1)
 {
-   std::vector<std::string>::const_iterator itSub = subElements.begin();
-   for (; itSub != subElements.end(); itSub++) {
-       //int rc =
-       static_cast<void> (measurement->addReference3D(obj,(*itSub).c_str()));
-   }
+    int refType = invalidRef;
+    if (DrawUtil::getGeomTypeFromName(g1) == "Edge") {
+        refType = oneEdge;
+    }
+    return refType;
+}
+
+//static
+int DrawViewDimension::getRefType2(const std::string g1, const std::string g2)
+{
+    int refType = invalidRef;
+    if ((DrawUtil::getGeomTypeFromName(g1) == "Edge") &&
+        (DrawUtil::getGeomTypeFromName(g2) == "Edge")) {
+        refType = twoEdge;
+    } else if ((DrawUtil::getGeomTypeFromName(g1) == "Vertex") &&
+               (DrawUtil::getGeomTypeFromName(g2) == "Vertex")) {
+        refType = twoVertex;
+    } else if (((DrawUtil::getGeomTypeFromName(g1) == "Vertex") &&
+                (DrawUtil::getGeomTypeFromName(g2) == "Edge"))   ||
+               ((DrawUtil::getGeomTypeFromName(g1) == "Edge") &&
+               (DrawUtil::getGeomTypeFromName(g2) == "Vertex")) ) {
+        refType = vertexEdge;
+    }
+    //} else add different types here - Vertex-Face, ...
+
+    return refType;
+}
+
+//!add Dimension 3D references to measurement
+void DrawViewDimension::setAll3DMeasurement()
+{
+    measurement->clear();
+    const std::vector<App::DocumentObject*> &Objs = References3D.getValues();
+    const std::vector<std::string> &Subs      = References3D.getSubValues();
+    int end = Objs.size();
+    int i = 0;
+    for ( ; i < end; i++) {
+        static_cast<void> (measurement->addReference3D(Objs.at(i), Subs.at(i)));
+    }
 }
 
 //delete all previous measurements
 void DrawViewDimension::clear3DMeasurements()
 {
+    //set sublinklist to empty?
     measurement->clear();
 }
 

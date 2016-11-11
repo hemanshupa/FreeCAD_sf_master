@@ -29,10 +29,6 @@ from PathScripts import PathUtils
 if FreeCAD.GuiUp:
     import FreeCADGui
     from PySide import QtCore, QtGui
-    from DraftTools import translate
-else:
-    def translate(ctxt, txt):
-        return txt
 
 __title__ = "Path Surface Operation"
 __author__ = "sliptonic (Brad Collette)"
@@ -135,9 +131,9 @@ class ObjectSurface:
             for loop in loops:
                 p = loop[0]
                 loopstring = "(loop begin)" + "\n"
-                loopstring += "G0 Z" + str(obj.SafeHeight.Value) + "\n"
+                loopstring += "G0 Z" + str(obj.SafeHeight.Value) + "F " + PathUtils.fmt(self.vertRapid) + "\n"
                 loopstring += "G0 X" + \
-                    str(fmt(p.x)) + " Y" + str(fmt(p.y)) + "\n"
+                    str(fmt(p.x)) + " Y" + str(fmt(p.y)) + "F " + PathUtils.fmt(self.horizRapid) + "\n"
                 loopstring += "G1 Z" + str(fmt(p.z)) + "\n"
                 for p in loop[1:]:
                     loopstring += "G1 X" + \
@@ -243,8 +239,8 @@ class ObjectSurface:
 
         # generate the path commands
         output = ""
-        output += "G0 Z" + str(obj.ClearanceHeight.Value) + "\n"
-        output += "G0 X" + str(clp[0].x) + " Y" + str(clp[0].y) + "\n"
+        output += "G0 Z" + str(obj.ClearanceHeight.Value) + "F " + PathUtils.fmt(self.vertRapid) + "\n"
+        output += "G0 X" + str(clp[0].x) + " Y" + str(clp[0].y) + "F " + PathUtils.fmt(self.horizRapid) + "\n"
         output += "G1 Z" + str(clp[0].z) + " F" + str(self.vertFeed) + "\n"
 
         for c in clp:
@@ -265,14 +261,21 @@ class ObjectSurface:
         if toolLoad is None or toolLoad.ToolNumber == 0:
             self.vertFeed = 100
             self.horizFeed = 100
+            self.vertRapid = 100
+            self.horizRapid = 100
             self.radius = 0.25
             obj.ToolNumber = 0
             obj.ToolDescription = "UNDEFINED"
         else:
             self.vertFeed = toolLoad.VertFeed.Value
             self.horizFeed = toolLoad.HorizFeed.Value
+            self.vertRapid = toolLoad.VertRapid.Value
+            self.horizRapid = toolLoad.HorizRapid.Value
             tool = PathUtils.getTool(obj, toolLoad.ToolNumber)
-            self.radius = tool.Diameter/2
+            if tool.Diameter == 0:
+                self.radius = 0.25
+            else:
+                self.radius = tool.Diameter/2
             obj.ToolNumber = toolLoad.ToolNumber
             obj.ToolDescription = toolLoad.Name
 
@@ -284,38 +287,48 @@ class ObjectSurface:
         output += "(" + obj.Label + ")"
         output += "(Compensated Tool Path. Diameter: " + str(self.radius * 2) + ")"
 
-        if obj.Base:
-            for b in obj.Base:
+        # if obj.Base:
+        #     for b in obj.Base:
 
-                if obj.Algorithm in ['OCL Dropcutter', 'OCL Waterline']:
-                    try:
-                        import ocl
-                    except:
-                        FreeCAD.Console.PrintError(translate(
-                            "PathSurface", "This operation requires OpenCamLib to be installed.\n"))
-                        return
+        parentJob = PathUtils.findParentJob(obj)
+        if parentJob is None:
+            return
+        mesh = parentJob.Base
+        if mesh is None:
+            return
+        print "base object: " + mesh.Name
 
-                mesh = b[0]
-                if mesh.TypeId.startswith('Mesh'):
-                    mesh = mesh.Mesh
-                    bb = mesh.BoundBox
-                else:
-                    bb = mesh.Shape.BoundBox
-                    mesh = MeshPart.meshFromShape(mesh.Shape, MaxLength=2)
 
-                s = ocl.STLSurf()
-                for f in mesh.Facets:
-                    p = f.Points[0]
-                    q = f.Points[1]
-                    r = f.Points[2]
-                    t = ocl.Triangle(ocl.Point(p[0], p[1], p[2]), ocl.Point(
-                        q[0], q[1], q[2]), ocl.Point(r[0], r[1], r[2]))
-                    s.addTriangle(t)
 
-                if obj.Algorithm == 'OCL Dropcutter':
-                    output = self._dropcutter(obj, s, bb)
-                elif obj.Algorithm == 'OCL Waterline':
-                    output = self._waterline(obj, s, bb)
+        if obj.Algorithm in ['OCL Dropcutter', 'OCL Waterline']:
+            try:
+                import ocl
+            except:
+                FreeCAD.Console.PrintError(translate(
+                    "PathSurface", "This operation requires OpenCamLib to be installed.\n"))
+                return
+
+        #mesh = b[0]
+        if mesh.TypeId.startswith('Mesh'):
+            mesh = mesh.Mesh
+            bb = mesh.BoundBox
+        else:
+            bb = mesh.Shape.BoundBox
+            mesh = MeshPart.meshFromShape(mesh.Shape, MaxLength=2)
+
+        s = ocl.STLSurf()
+        for f in mesh.Facets:
+            p = f.Points[0]
+            q = f.Points[1]
+            r = f.Points[2]
+            t = ocl.Triangle(ocl.Point(p[0], p[1], p[2]), ocl.Point(
+                q[0], q[1], q[2]), ocl.Point(r[0], r[1], r[2]))
+            s.addTriangle(t)
+
+        if obj.Algorithm == 'OCL Dropcutter':
+            output = self._dropcutter(obj, s, bb)
+        elif obj.Algorithm == 'OCL Waterline':
+            output = self._waterline(obj, s, bb)
 
         if obj.Active:
             path = Path.Path(output)
@@ -368,11 +381,15 @@ class CommandPathSurfacing:
     def GetResources(self):
         return {'Pixmap': 'Path-3DSurface',
                 'MenuText': QtCore.QT_TRANSLATE_NOOP("Path_Surface", "Surfacing"),
-                'Accel': "P, D",
+                'Accel': "P, S",
                 'ToolTip': QtCore.QT_TRANSLATE_NOOP("Path_Surface", "Creates a Path Surfacing object")}
 
     def IsActive(self):
-        return FreeCAD.ActiveDocument is not None
+        if FreeCAD.ActiveDocument is not None:
+            for o in FreeCAD.ActiveDocument.Objects:
+                if o.Name[:3] == "Job":
+                        return True
+        return False
 
     def Activated(self):
 
@@ -396,7 +413,7 @@ class CommandPathSurfacing:
         FreeCADGui.doCommand('obj.SampleInterval = 0.4')
 
         FreeCADGui.doCommand('obj.FinalDepth=' + str(zbottom))
-        FreeCADGui.doCommand('PathScripts.PathUtils.addToProject(obj)')
+        FreeCADGui.doCommand('PathScripts.PathUtils.addToJob(obj)')
 
         FreeCAD.ActiveDocument.commitTransaction()
         FreeCAD.ActiveDocument.recompute()

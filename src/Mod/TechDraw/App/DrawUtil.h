@@ -24,6 +24,9 @@
 #define _DrawUtil_h_
 
 #include <string>
+
+#include <QString>
+#include <QByteArray>
 #include <TopoDS.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Edge.hxx>
@@ -42,6 +45,7 @@ class TechDrawExport DrawUtil {
         static std::string makeGeomName(std::string geomType, int index);
         static bool isSamePoint(TopoDS_Vertex v1, TopoDS_Vertex v2);
         static bool isZeroEdge(TopoDS_Edge e);
+        static double sensibleScale(double working_scale);
         //debugging routines
         static void dumpVertexes(const char* text, const TopoDS_Shape& s);
         static void dumpEdge(char* label, int i, TopoDS_Edge e);
@@ -49,6 +53,8 @@ class TechDrawExport DrawUtil {
         static void countFaces(const char* label, const TopoDS_Shape& s);
         static void countWires(const char* label, const TopoDS_Shape& s);
         static void countEdges(const char* label, const TopoDS_Shape& s);
+        static const char* printBool(bool b);
+        static QString qbaToDebug(const QByteArray& line);
 };
 
 } //end namespace TechDraw

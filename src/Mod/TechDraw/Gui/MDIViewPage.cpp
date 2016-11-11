@@ -75,6 +75,7 @@
 #include <Mod/TechDraw/App/DrawViewSection.h>
 #include <Mod/TechDraw/App/DrawViewSpreadsheet.h>
 #include <Mod/TechDraw/App/DrawViewSymbol.h>
+#include <Mod/TechDraw/App/DrawViewImage.h>
 
 #include "QGIDrawingTemplate.h"
 #include "QGIView.h"
@@ -315,6 +316,9 @@ bool MDIViewPage::attachView(App::DocumentObject *obj)
     } else if (typeId.isDerivedFrom(TechDraw::DrawViewSpreadsheet::getClassTypeId()) ) {
         qview = m_view->addDrawViewSpreadsheet( static_cast<TechDraw::DrawViewSpreadsheet *>(obj) );
 
+    } else if (typeId.isDerivedFrom(TechDraw::DrawViewImage::getClassTypeId()) ) {
+        qview = m_view->addDrawViewImage( static_cast<TechDraw::DrawViewImage *>(obj) );
+
     } else if (typeId.isDerivedFrom(TechDraw::DrawHatch::getClassTypeId()) ) {
         //Hatch is not attached like other Views (since it isn't really a View)
         return true;
@@ -418,7 +422,25 @@ void MDIViewPage::updateDrawing(bool forceUpdate)
     }
 }
 
+void MDIViewPage::redrawAllViews()
+{
+    const std::vector<QGIView *> &upviews = m_view->getViews();
+    for(std::vector<QGIView *>::const_iterator it = upviews.begin(); it != upviews.end(); ++it) {
+            (*it)->updateView(true);
+    }
+}
 
+void MDIViewPage::redraw1View(TechDraw::DrawView* dv)
+{
+    std::string dvName = dv->getNameInDocument();
+    const std::vector<QGIView *> &upviews = m_view->getViews();
+    for(std::vector<QGIView *>::const_iterator it = upviews.begin(); it != upviews.end(); ++it) {
+        std::string qgivName = (*it)->getViewObject()->getNameInDocument();
+        if(dvName == qgivName) {
+            (*it)->updateView(true);
+        }
+    }
+}
 void MDIViewPage::findMissingViews(const std::vector<App::DocumentObject*> &list, std::vector<App::DocumentObject*> &missing)
 {
     for(std::vector<App::DocumentObject*>::const_iterator it = list.begin(); it != list.end(); ++it) {

@@ -119,7 +119,7 @@ class _ArchSchedule:
                     if objs[0].isDerivedFrom("App::DocumentObjectGroup"):
                         objs = objs[0].Group
                 objs = Draft.getGroupContents(objs,walls=True,addgroups=True)
-                objs = Arch.pruneIncluded(objs)
+                objs = Arch.pruneIncluded(objs,strict=True)
                 if obj.Filter[i]:
                     # apply filters
                     nobjs = []
@@ -322,9 +322,23 @@ class _ArchScheduleTaskPanel:
 
     def exportCSV(self):
         if self.obj:
-            filename = QtGui.QFileDialog.getSaveFileName(QtGui.qApp.activeWindow(), translate("Arch","Export CSV File"), None, "CSV file (*.csv)");
-            if filename:
-                self.obj.Result.exportFile(str(filename[0].encode("utf8")))
+            if self.obj.Result:
+                filename = QtGui.QFileDialog.getSaveFileName(QtGui.qApp.activeWindow(), translate("Arch","Export CSV File"), None, "CSV file (*.csv)");
+                if filename:
+                    # the following line crashes, couldn't fnid out why
+                    # self.obj.Result.exportFile(str(filename[0].encode("utf8")))
+                    import csv
+                    if not("Up-to-date" in self.obj.State):
+                        self.obj.Proxy.execute(self.obj)
+                    numrows = len(self.obj.Description)+1
+                    with open(filename[0].encode("utf8"), 'wb') as csvfile:
+                        csvfile = csv.writer(csvfile,delimiter="\t")
+                        for i in range(numrows):
+                            r = []
+                            for j in ["A","B","C"]:
+                                r.append(self.obj.Result.getContents(j+str(i+1)))
+                            csvfile.writerow(r)
+                    print "successfully exported ",filename[0]
 
     def select(self):
         if self.form.list.currentRow() >= 0:
